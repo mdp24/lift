@@ -35,10 +35,10 @@ import Helpers._
 trait MetaLDAPProtoUser[ModelType <: LDAPProtoUser[ModelType]] extends MetaMegaProtoUser[ModelType] {
     self: ModelType =>
 
-    override def signupFields: List[BaseOwnedMappedField[ModelType]] = uid ::
+    override def signupFields: List[FieldPointerType] = uid ::
         cn :: dn :: Nil
 
-    override def fieldOrder: List[BaseOwnedMappedField[ModelType]] = uid ::
+    override def fieldOrder: List[FieldPointerType] = uid ::
         cn :: dn :: Nil
 
     /**
