@@ -42,7 +42,20 @@ abstract class DriverType(val name : String) {
   def longColumnType: String
   def doubleColumnType: String
 
+  /**
+   * This specifies that the driver supports FKs in tables. Note that
+   * to enable FK generation in Schemifier, you also need to set
+   * MapperRules.createForeignKeys_? to true before running it.
+   */
   def supportsForeignKeys_? : Boolean = false
+
+  /**
+   * This indicates that Schemifier needs to run with a non-transacted
+   * connection. Certain databases require that gathering information
+   * on tables (which Schemifier uses for updates) run outside of a transaction.
+   */
+  def schemifierMustAutoCommit_? : Boolean = false
+
   def createTablePostpend: String = ""
 
   /**
@@ -346,6 +359,7 @@ object SybaseASEDriver extends SqlServerBaseDriver {
   override def binaryColumnType = "VARBINARY(MAX)"
   override def clobColumnType = "NVARCHAR(MAX)"
   override def brokenLimit_? = true
+  override def schemifierMustAutoCommit_? = true
 }
 
 /**
