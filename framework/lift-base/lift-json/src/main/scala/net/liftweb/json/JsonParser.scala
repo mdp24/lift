@@ -96,16 +96,10 @@ object JsonParser {
     unquote(new JsonParser.Buffer(new java.io.StringReader(string), false))
   
   private[json] def unquote(buf: JsonParser.Buffer): String = {
-    val EOF = (-1).asInstanceOf[Char]
-    
     def unquote0(buf: JsonParser.Buffer, base: String): String = {
       val s = new java.lang.StringBuilder(base)
       var c = '\\'
-      while (c != EOF) {
-        if (c == '"') {
-          return s.toString
-        }
-
+      while (c != '"') {
         if (c == '\\') {
           buf.next match {
             case '"'  => s.append('"')
@@ -125,19 +119,18 @@ object JsonParser {
         } else s.append(c)
         c = buf.next
       }
-      error("expected string end")
+      s.toString
     }
     
     buf.mark
     var c = buf.next
-    while (c != EOF) {
-      if (c == '"') return buf.substring
+    while (c != '"') {
       if (c == '\\') {
         return unquote0(buf, buf.substring)
       }
       c = buf.next
     }
-    error("expected string end")
+    buf.substring
   }
 
   private val astParser = (p: Parser) => {
@@ -247,8 +240,7 @@ object JsonParser {
       def parseString: String = {
         try {
           unquote(buf)
-        }
-        catch {
+        } catch {
           case _ => fail("unexpected string end")
         }
       }
