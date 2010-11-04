@@ -883,7 +883,34 @@ for {
    * @param f Function to execute within the scope of the request and session
    */
   def init[B](request: Req, session: LiftSession)(f: => B): B = {
-    _init(request, session)(() => f)
+    if (inS.value) f
+    else {
+      if (request.stateless_?) 
+        session.doAsStateless(_init(request, session)(() => f))
+      else _init(request, session)(() => f)
+    }
+  }
+  
+  def statelessInit[B](request: Req)(f: => B): B = {
+    session match {
+      case Full(s) if s.stateful_? => {
+        throw new StateInStatelessException(
+          "Attempt to initialize a stateless session within the context "+
+          "of a stateful session")
+      }
+      
+      case Full(_) => f
+
+      case _ => {
+        val fakeSess = LiftRules.statelessSession.vend.apply(request)
+        try {
+          _init(request, 
+                fakeSess)(() => f)
+        } finally {
+          ActorPing.schedule(() => fakeSess.doShutDown(), 0 seconds)
+        }
+      }
+    }
   }
 
   /**
@@ -1191,7 +1218,7 @@ for {
   private def doStatefulRewrite(old: Req): Req = {
     // Don't even try to rewrite Req.nil
     if (!old.path.partPath.isEmpty && (old.request ne null))
-      Req(old, S.sessionRewriter.map(_.rewrite) ::: LiftRules.statefulRewrite.toList)
+      Req(old, S.sessionRewriter.map(_.rewrite) ::: LiftRules.statefulRewrite.toList, LiftRules.statelessTest.toList)
     else old
   }
 
@@ -1587,6 +1614,15 @@ for {
     } ::: attrs)(f)
   }
 
+  /**
+   * Initialize the current request session if it's not already initialized.
+   * Generally this is handled by Lift during request processing, but this
+   * method is available in case you want to use S outside the scope
+   * of a request (standard HTTP or Comet).
+   *
+   * @param session the LiftSession for this request
+   * @param f A function to execute within the scope of the session
+   */
   def initIfUninitted[B](session: LiftSession)(f: => B): B = {
     if (inS.value) f
     else init(Req.nil, session)(f)
@@ -1715,14 +1751,26 @@ for {
    * Get a map of function name bindings that are used for form and other processing. Using these
    * bindings is considered advanced functionality.
    */
-  def functionMap: Map[String, AFuncHolder] =
+  def functionMap: Map[String, AFuncHolder] = {
     Box.legacyNullTest(_functionMap.value).
-            map(s => Map(s.elements.toList: _*)).openOr(Map.empty)
+    map(s => Map(s.elements.toList: _*)).openOr(Map.empty)
+  }
+
+  private def testFunctionMap[T](f: T): T = 
+    session match {
+      case Full(s) if s.stateful_? => f
+      case _ => throw new StateInStatelessException(
+        "Accessing function map information outside of a stateful session")
+    }
 
   /**
    * Clears the function map.  potentially very destuctive... use at your own risk!
    */
-  def clearFunctionMap {Box.!!(_functionMap.value).foreach(_.clear)}
+  def clearFunctionMap {
+    testFunctionMap {
+      Box.!!(_functionMap.value).foreach(_.clear)
+    }
+  }
 
   /**
    * The current context path for the deployment.
@@ -1801,10 +1849,22 @@ for {
   def mapSnippet(name: String, func: NodeSeq => NodeSeq) {_snippetMap.set(_snippetMap.is.update(name, func))}
 
   /**
+   * The are times when it's helpful to define snippets for a certain
+   * call stack... snippets that are local purpose. Use doWithSnippets
+   * to temporarily define snippet mappings for the life of f.
+   */
+  def mapSnippetsWith[T](snips: (String,  NodeSeq => NodeSeq)*)(f: => T): T = {
+    val newMap = _snippetMap.is ++ snips
+    _snippetMap.doWith(newMap)(f)
+  }
+   
+
+  /**
    * Associates a name with a function impersonated by AFuncHolder. These are basically functions
    * that are executed when a request contains the 'name' request parameter.
    */
   def addFunctionMap(name: String, value: AFuncHolder) = {
+    testFunctionMap {
    (autoCleanUp.box, _oneShot.box) match {
      case (Full(true), _) => {
        _functionMap.value += (name ->
@@ -1868,6 +1928,7 @@ for {
      case _ =>
        _functionMap.value += (name -> value)
    }
+  }
   }
 
   private def booster(lst: List[String], func: String => Any): Unit = lst.foreach(v => func(v))
@@ -2230,7 +2291,9 @@ for {
 
     if (inS.value) doRender(session.open_!)
     else {
-      val req = Req(httpRequest, LiftRules.statelessRewrite.toList, System.nanoTime)
+      val req = Req(httpRequest, LiftRules.statelessRewrite.toList,
+                    LiftRules.statelessTest.toList,
+                    System.nanoTime)
       val ses: LiftSession = SessionMaster.getSession(httpRequest, Empty) match {
         case Full(ret) =>
           ret.fixSessionTime()
@@ -2476,8 +2539,22 @@ for {
  * Defines the notices types
  */
 @serializable
-object NoticeType extends Enumeration {
-  val Notice, Warning, Error = Value
+object NoticeType {
+  sealed abstract class Value(val title : String) {
+    def lowerCaseTitle = title.toLowerCase
+
+    // The element ID to use for notice divs
+    def id : String = LiftRules.noticesContainerId + "_" + lowerCaseTitle
+
+    // The element that will define the title to use in notice messages
+    def titleTag : String = lowerCaseTitle + "_msg"
+
+    def styleTag : String = lowerCaseTitle + "_class"
+  }
+
+  object Notice extends Value("Notice")
+  object Warning extends Value("Warning")
+  object Error extends Value("Error")
 }
 
 /**

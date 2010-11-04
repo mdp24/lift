@@ -114,7 +114,7 @@ class PCDataXmlParser(val input: Source) extends ConstructingHandler with PCData
 
       Utility.prefix(qname) match {
         case Some("xmlns") =>
-          val prefix = qname.substring(6 /*xmlns:*/ , qname.length);
+          val prefix = qname.substring(6 /* xmlns: */ , qname.length);
           scope = new NamespaceBinding(prefix, value, scope);
 
         case Some(prefix)       =>
@@ -182,17 +182,45 @@ object PCDataXmlParser {
 
   def apply(in: InputStream): Box[NodeSeq] = {
     for {
-      source <- (tryo{Source.fromInputStream(in)} match {case Full(x) => Full(x) case _ => Empty})
+      ba <- tryo(Helpers.readWholeStream(in))
+      ret <- apply(new String(ba, "UTF-8"))
+    } yield ret
+  }
+
+  private def apply(source: Source): Box[NodeSeq] = {
+    for {
       p <- tryo{new PCDataXmlParser(source)}
       val _ = while (p.ch != '<' && p.curInput.hasNext) p.nextch
       bd <- tryo(p.document)
       doc <- Box !! bd
-    } yield doc
+    } yield (doc.children: NodeSeq)
+
   }
 
   def apply(in: String): Box[NodeSeq] = {
-    import _root_.java.io.ByteArrayInputStream
-    apply(new ByteArrayInputStream(in.getBytes("UTF-8")))
+    var pos = 0
+    val len = in.length
+    def moveToLT() {
+      while (pos < len && in.charAt(pos) != '<') {
+        pos += 1
+      }
+    }
+    
+    moveToLT()
+
+    // scan past <? ... ?>
+    if (pos + 1 < len && in.charAt(pos + 1) == '?') {
+      pos += 1
+      moveToLT()
+    }    
+
+    // scan past <!DOCTYPE ....>
+    if (pos + 1 < len && in.charAt(pos + 1) == '!') {
+      pos += 1
+      moveToLT()
+    }
+    
+    apply(Source.fromString(in.substring(pos)))
   }
 }
 

@@ -41,6 +41,22 @@ trait Loc[T] {
     override val __nameSalt = randomString(10)
   }
 
+  /**
+   * When the menu item is displayed, what CSS class do we add to the
+   * node?
+   */
+  def cssClassForMenuItem: Box[String] = cacheCssClassForMenuItem.map(_())
+
+  /**
+   * By default, this lazy val looks for the MenuCssClass LocParam and
+   * uses it.
+   */
+  protected lazy val cacheCssClassForMenuItem: Box[() => String] = 
+    params.flatMap {
+      case a: Loc.MenuCssClass => List(a)
+      case _ => Nil
+    }.headOption.map(_.cssClass.func)
+
   def defaultValue: Box[T]
 
   def currentValue: Box[T] = overrideValue or requestValue.is or defaultValue
@@ -92,6 +108,29 @@ trait Loc[T] {
   type SnippetTest = PartialFunction[(String, Box[T]), NodeSeq => NodeSeq]
 
   def snippets: SnippetTest = Map.empty
+
+  /**
+   * Is the Loc marked as Stateless (this will force rendering of
+   * the page into stateless mode)
+   */
+  def stateless_? : Boolean = 
+    if (Props.devMode) calcStateless()
+    else _frozenStateless
+
+  /**
+   * A lazy val used to track statelessness for non-dev mode.
+   * By default, it calls calcStateless().
+   */
+  protected lazy val _frozenStateless = calcStateless()
+
+  /**
+   * The method to calculate if this Loc is stateless.  By default
+   * looks for the Loc.Stateless Param
+   */
+  protected def calcStateless() = allParams.find {
+    case Loc.Stateless => true
+    case _ => false
+  }.isDefined
 
   lazy val calcSnippets: SnippetTest = {
     def buildPF(in: Loc.Snippet): PartialFunction[String, NodeSeq => NodeSeq] = {
@@ -431,6 +470,20 @@ object Loc {
   case class IfValue[T](test: Box[T] => Boolean, failMsg: FailMsg) extends LocParam[T]
 
   /**
+   * MenuCssClass is used to add css to the Menu node.  The css allows for
+   * replacing menu with an icon and other super-fun and helpful things.
+   * cssClass is a StringFunc which can either be a String constant or
+   * a Function that returns a String.  Thus, you can compute the
+   * css based on the current state or you can have a constant.  Syntactically
+   * you can use either:
+   * <pre>
+   * MenuCssClass("foobar")
+   * MenuCssClass(() => calculateCssForMyMenuItem())
+   * </pre>
+   */
+  case class MenuCssClass(cssClass: StringFunc) extends AnyLocParam
+
+  /**
    * Unless the test returns True, the page can be accessed, otherwise,
    * the result of FailMsg will be sent as a response to the browser.
    * If the Loc cannot be accessed, it will not be displayed in menus.
@@ -498,6 +551,12 @@ object Loc {
    * If the Loc has no children, hide the Loc itself
    */
   case object HideIfNoKids extends AnyLocParam
+
+  /**
+   * Is the Loc a stateless Loc... it will be served
+   * in stateless mode
+   */
+  case object Stateless extends AnyLocParam
 
   /**
    * The Loc does not represent a menu itself, but is the parent menu for
@@ -642,6 +701,9 @@ case class MenuItem(text: NodeSeq, uri: NodeSeq,  kids: Seq[MenuItem],
   private var _placeholder = false
   def placeholder_? = _placeholder
 
+  private var _cssClass: Box[String] = Empty
+  def cssClass: Box[String] = _cssClass
+
   def this(text: NodeSeq, uri: NodeSeq,  kids: Seq[MenuItem],
            current: Boolean,
            path: Boolean,
@@ -649,6 +711,17 @@ case class MenuItem(text: NodeSeq, uri: NodeSeq,  kids: Seq[MenuItem],
            ph: Boolean) = {
     this(text, uri, kids, current, path, info)
     _placeholder = ph
+  }
+
+  def this(text: NodeSeq, uri: NodeSeq,  kids: Seq[MenuItem],
+           current: Boolean,
+           path: Boolean,
+           info: List[Box[() => _]],
+           ph: Boolean,
+           loc: Loc[_]) = {
+    this(text, uri, kids, current, path, info)
+    _placeholder = ph
+    _cssClass = loc.cssClassForMenuItem
   }
 
   def breadCrumbs: Seq[MenuItem] = {
